@@ -1,0 +1,23 @@
+{
+  "name": "wiz-udp-controller",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon --exec ts-node src/service.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "@lukeed/uuid": "^2.0.1",
+    "chroma-js": "^3.1.2",
+    "nodemon": "^3.1.9",
+    "zod": "^3.24.2"
+  }
+}
