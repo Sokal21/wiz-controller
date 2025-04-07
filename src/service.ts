@@ -12,11 +12,13 @@ import { useNetworkInterface } from './networking';
 import {
   bufferToJSON,
   BulbState,
+  createMessage,
   createRegistrationMessage,
   isRegistrationResponse,
   isSyncMessage,
   RegistrationResponse,
   SyncPilotMessage,
+  WizCommands,
 } from './wiz';
 
 type Emmiter = (command: Buffer) => void;
@@ -28,30 +30,30 @@ interface Actor {
   emmiter: Emmiter;
 }
 
-class Store {
+export class Store {
   data: Map<string, Actor>;
 
-  constructor () {
+  constructor() {
     this.data = new Map<string, Actor>();
   }
 
-  has (key: string): boolean {
+  has(key: string): boolean {
     return this.data.has(key);
   }
 
-  get (key: string): Actor | undefined {
+  get(key: string): Actor | undefined {
     return this.data.get(key);
   }
 
-  set (key: string, value: Actor): void {
+  set(key: string, value: Actor): void {
     this.data.set(key, value);
   }
 
-  delete (key: string): boolean {
+  delete(key: string): boolean {
     return this.data.delete(key);
   }
 
-  clear (): void {
+  clear(): void {
     this.data.clear();
   }
 }
@@ -69,7 +71,7 @@ export class WizService {
 
   isRegistered: boolean;
 
-  constructor (private store: Store) {
+  constructor(private store: Store) {
     this.inSocket = dgram.createSocket({ type: 'udp4' });
     this.outSocket = dgram.createSocket({ type: 'udp4' });
 
@@ -90,18 +92,37 @@ export class WizService {
     this.outSocket.on('error', onError(this.portOut));
   }
 
-  async start (): Promise<void> {
+  async start(): Promise<void> {
     this.listen();
     await this.register();
   }
 
-  stop (): void {
+  stop(): void {
     this.isRegistered = false;
     this.inSocket.unref();
     this.outSocket.unref();
   }
 
-  private async register (): Promise<void> {
+  public sendGenericMessage(bulbId: string, params: {
+    state?: boolean;
+    speed?: number;
+    dimming?: number;
+    temp?: number;
+    sceneId?: number;
+    r?: number;
+    g?: number;
+    b?: number;
+  }): void {
+    const bulb = this.store.get(bulbId);
+    if (!bulb) {
+      throw new Error('Bulb not found');
+    }
+
+    const message = createMessage(bulbId, WizCommands.BulbGeneric, params);
+    bulb.emmiter(message);
+  }
+
+  private async register(): Promise<void> {
     if (this.isRegistered) {
       this.debug('Service already registered');
       return;
@@ -171,9 +192,9 @@ export class WizService {
     });
   }
 
-  private listen (): void {
+  private listen(): void {
     this.inSocket.on('message', (msg, info) => {
-      this.debug({ info });
+      this.debug({ info, msg: msg.toString() });
 
       const id = info.address;
 
@@ -205,6 +226,30 @@ export class WizService {
           };
 
           this.store.set(id, newActor);
+          // const command = createMessage(id, WizCommands.BulbGetState, {}); 
+          // commandEmmiter(command);
+
+          // setInterval(() => {
+          //   const b = this.store.get(id)
+
+          //   if(b?.state.state) {
+          //     const command = createMessage(id, WizCommands.BulbGeneric, {
+          //       state: true,
+          //       speed: 1
+          //     })
+          //     commandEmmiter(command)
+
+          //     this.store.set(id, { ...b, state: { ...b.state, state: false } })
+          //   } else if (b) {
+          //     const command = createMessage(id, WizCommands.BulbGeneric, {
+          //       state: false,
+          //       speed: 1
+          //     })
+          //     commandEmmiter(command)
+
+          //     this.store.set(id, { ...b, state: { ...b.state, state: true } })
+          //   }
+          // }, 2000)
 
           this.debug(`New actor named ${newActor.name} (id: ${newActor.id})`);
         }
@@ -213,18 +258,8 @@ export class WizService {
 
     return;
   }
-}
 
-const init = async () => {
-  const store = new Store();
-  const wizService = new WizService(store);
-
-  try {
-    await wizService.start();
-  } catch (error) {
-    console.log(error);
-    wizService.stop();
+  getBulbs(): Array<Actor> {
+    return Array.from(this.store.data.values());
   }
-};
-
-init();
+}

@@ -100,7 +100,7 @@ export function createRegistrationMessage (ipAddress: string, macAddress: string
   return JSONToBuffer(registrationMessage);
 }
 
-enum WizCommands {
+export enum WizCommands {
   BulbTurnOn = 'BulbTurnOn',
   BulbTurnOff = 'BulbTurnOff',
   BulbSetColor = 'BulbSetColor',
@@ -108,9 +108,11 @@ enum WizCommands {
   BulbSetDimming = 'BulbSetDimming',
   BulbSetScene = 'BulbSetScene',
   BulbSetSpeed = 'BulbSetSpeed',
+  BulbGeneric = 'BulbGeneric',
+  BulbGetState = 'BulbGetState',
 }
 
-type SupportedCommand = keyof Omit<WizCommands, 'BulbGetState' | 'BulbSync'>;
+type SupportedCommand = keyof Omit<WizCommands, 'BulbSync'>;
 
 export function createMessage<Command extends SupportedCommand> (mac: string, event: WizCommands, payload: unknown): Buffer {
   const newState: BulbState = parsePayload(event, payload);
@@ -212,6 +214,16 @@ function parsePayload (event: WizCommands, params: unknown): BulbState {
       return {
         speed,
       };
+    }
+
+    case WizCommands.BulbGeneric: {
+      validateNonEmptyObject(params);
+      
+      return params;
+    }
+
+    case WizCommands.BulbGetState: {
+      return {};
     }
 
     default:
