@@ -4,9 +4,10 @@ import { useChangeBulbColor } from './hooks/useChangeBulbColor';
 import { useMicrophone } from './hooks/useMicrophone';
 import { BulbsList } from './components/BulbsList';
 import { Controller } from './components/Controller';
+import { useChangeBulbBrightness } from './hooks/useChangeBulbBrigthness';
+import { Pad } from './components/Pad';
 
 import './App.css';
-import { useChangeBulbBrightness } from './hooks/useChangeBulbBrigthness';
 
 function App() {
   const { bulbs } = useGetBulbs();
@@ -15,13 +16,22 @@ function App() {
   const [selectedBulbs, setSelectedBulbs] = useState<string[]>([]);
   const [isBeatDetected, setIsBeatDetected] = useState(false);
   const [brightness, setBrightness] = useState(50);
+  const [color, setColor] = useState('#ffffff');
+  const [isLooping, setIsLooping] = useState(false);
+  const [intervalSpeed, setIntervalSpeed] = useState(50);
+  const [startColor, setStartColor] = useState('#ff0000');
+  const [endColor, setEndColor] = useState('#000000');
+  const loopInterval = useRef<NodeJS.Timeout | null>(null);
+  const beatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const padTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [padTimeout, setPadTimeout] = useState(1000);
 
   const onBeatDetected = useCallback(() => {
     setIsBeatDetected(true);
     selectedBulbs.forEach((bulbId) => {
-      changeBulbColor(bulbId, '#ff0000');
+      changeBulbColor(bulbId, color);
     });
-  }, [changeBulbColor, selectedBulbs]);
+  }, [changeBulbColor, selectedBulbs, color]);
 
   const onBeatEnded = useCallback(() => {
     setIsBeatDetected(false);
@@ -34,13 +44,6 @@ function App() {
     onBeatDetected,
     onBeatEnded
   );
-  const [color, setColor] = useState('#ffffff');
-  const [isLooping, setIsLooping] = useState(false);
-  const [intervalSpeed, setIntervalSpeed] = useState(50);
-  const [startColor, setStartColor] = useState('#ff0000');
-  const [endColor, setEndColor] = useState('#000000');
-  const loopInterval = useRef<NodeJS.Timeout | null>(null);
-  const beatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     return () => {
@@ -61,6 +64,22 @@ function App() {
         changeBulbColor(bulbId, newColor);
       });
     }
+  };
+
+  const handlePadPress = (color: string) => {
+    if (selectedBulbs.length > 0) {
+      selectedBulbs.forEach((bulbId) => {
+        changeBulbColor(bulbId, color);
+      }); 
+    }
+    if (padTimeoutRef.current) {
+      clearTimeout(padTimeoutRef.current);
+    }
+    padTimeoutRef.current = setTimeout(() => {
+      selectedBulbs.forEach((bulbId) => {
+        changeBulbColor(bulbId, '#010000');
+      });
+    }, padTimeout);
   };
 
   const toggleColorLoop = () => {
@@ -157,6 +176,7 @@ function App() {
         brightness={brightness}
         handleBrightnessChange={handleBrightnessChange}
       />
+      <Pad onPadPress={handlePadPress} timeout={padTimeout} setTimeout={setPadTimeout} />
     </>
   );
 }
