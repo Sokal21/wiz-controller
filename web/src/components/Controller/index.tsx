@@ -18,6 +18,8 @@ export const Controller: React.FC<ControllerProps> = ({
   toggleMicrophone,
   setStartColor,
   setEndColor,
+  brightness,
+  handleBrightnessChange,
 }) => {
   return (
     <div className="card w-full">
@@ -35,6 +37,20 @@ export const Controller: React.FC<ControllerProps> = ({
               marginTop: '10px',
             }}
           />
+          <div style={{ marginTop: '20px' }}>
+            <label htmlFor="brightness-slider" style={{ display: 'block', marginBottom: '10px' }}>
+              Brightness: {brightness}%
+            </label>
+            <input
+              id="brightness-slider"
+              type="range"
+              min="0"
+              max="100"
+              value={brightness}
+              onChange={handleBrightnessChange}
+              style={{ width: '100%' }}
+            />
+          </div>
         </div>
 
         <div>
@@ -83,22 +99,24 @@ export const Controller: React.FC<ControllerProps> = ({
               style={{ width: '100%' }}
             />
           </div>
+          <div>
+            <button
+              onClick={toggleColorLoop}
+              style={{
+                backgroundColor: isLooping ? '#ff0000' : '#1a1a1a',
+                color: isLooping ? '#ffffff' : '#ffffff',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              {isLooping ? 'Stop Color Loop' : 'Start Color Loop'}
+            </button>
+          </div>
         </div>
 
         <div>
-          <button
-            onClick={toggleColorLoop}
-            style={{
-              backgroundColor: isLooping ? '#ff0000' : '#1a1a1a',
-              color: isLooping ? '#ffffff' : '#ffffff',
-              padding: '10px 20px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            {isLooping ? 'Stop Color Loop' : 'Start Color Loop'}
-          </button>
           <h3>Sound Control</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div>

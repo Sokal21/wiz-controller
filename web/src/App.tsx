@@ -6,12 +6,15 @@ import { BulbsList } from './components/BulbsList';
 import { Controller } from './components/Controller';
 
 import './App.css';
+import { useChangeBulbBrightness } from './hooks/useChangeBulbBrigthness';
 
 function App() {
   const { bulbs } = useGetBulbs();
   const { changeBulbColor } = useChangeBulbColor();
+  const { changeBulbBrightness } = useChangeBulbBrightness(); 
   const [selectedBulbs, setSelectedBulbs] = useState<string[]>([]);
   const [isBeatDetected, setIsBeatDetected] = useState(false);
+  const [brightness, setBrightness] = useState(50);
 
   const onBeatDetected = useCallback(() => {
     setIsBeatDetected(true);
@@ -122,6 +125,13 @@ function App() {
     setNoiseThreshold(parseInt(e.target.value));
   };
 
+  const handleBrightnessChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setBrightness(parseInt(e.target.value));
+    selectedBulbs.forEach((bulbId) => {
+      changeBulbBrightness(bulbId, parseInt(e.target.value));
+    });
+  };
+
   return (
     <>
       <h1>Wiz Bulb Controller</h1>
@@ -144,6 +154,8 @@ function App() {
         setEndColor={setEndColor}
         toggleMicrophone={toggleMicrophone}
         handleThresholdChange={handleThresholdChange}
+        brightness={brightness}
+        handleBrightnessChange={handleBrightnessChange}
       />
     </>
   );

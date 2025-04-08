@@ -16,4 +16,6 @@ export interface ControllerProps {
   setEndColor: (color: string) => void;
   toggleMicrophone: () => void;
   handleThresholdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  brightness: number;
+  handleBrightnessChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
