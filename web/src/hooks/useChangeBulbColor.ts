@@ -14,6 +14,7 @@ export const useChangeBulbColor = () => {
   const changeBulbColor = useCallback(
     (bulbId: string, hexColor: string) => {
       const { r, g, b } = hexToRgb(hexColor);
+      const state = !(r === 0 && g === 0 && b === 0);
 
       socket?.emit('sendMessage', {
         bulbId,
@@ -21,7 +22,7 @@ export const useChangeBulbColor = () => {
           r,
           g,
           b,
-          state: true,
+          state,
         },
       });
     },

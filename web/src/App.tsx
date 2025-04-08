@@ -36,7 +36,7 @@ function App() {
   const onBeatEnded = useCallback(() => {
     setIsBeatDetected(false);
     selectedBulbs.forEach((bulbId) => {
-      changeBulbColor(bulbId, '#010000');
+      changeBulbColor(bulbId, '#000001');
     });
   }, [changeBulbColor, selectedBulbs]);
 
@@ -77,7 +77,7 @@ function App() {
     }
     padTimeoutRef.current = setTimeout(() => {
       selectedBulbs.forEach((bulbId) => {
-        changeBulbColor(bulbId, '#010000');
+        changeBulbColor(bulbId, '#000001');
       });
     }, padTimeout);
   };
@@ -151,10 +151,22 @@ function App() {
     });
   };
 
+  const identifyBulb = (bulbId: string) => {
+    changeBulbColor(bulbId, '#ffffff');
+    setTimeout(() => {
+      changeBulbColor(bulbId, '#000001');
+    }, 100);
+  };
+
   return (
     <>
       <h1>Wiz Bulb Controller</h1>
-      <BulbsList bulbs={bulbs} selectedBulbs={selectedBulbs} onClickBulb={toggleBulbSelection} />
+      <BulbsList 
+        bulbs={bulbs} 
+        selectedBulbs={selectedBulbs} 
+        onClickBulb={toggleBulbSelection} 
+        onIdentifyBulb={identifyBulb}
+      />
       <Controller
         color={color}
         handleColorChange={handleColorChange}
