@@ -1,8 +1,18 @@
+import { useChangeBulbColor } from "../../hooks/useChangeBulbColor";
 import { BulbsListProps } from "./types"
 import classnames from "classnames";
 
-export const BulbsList: React.FC<BulbsListProps> = ({ bulbs, selectedBulbs, onClickBulb, onIdentifyBulb }) => {
+export const BulbsList: React.FC<BulbsListProps> = ({ bulbs, selectedBulbs, onClickBulb }) => {
   const allSelected = bulbs.length > 0 && selectedBulbs.length === bulbs.length;
+  const { changeBulbColor } = useChangeBulbColor();
+
+
+  const identifyBulb = (bulbId: string) => {
+    changeBulbColor(bulbId, '#ffffff');
+    setTimeout(() => {
+      changeBulbColor(bulbId, '#000001');
+    }, 100);
+  };
   
   const handleSelectAll = () => {
     if (allSelected) {
@@ -56,7 +66,7 @@ export const BulbsList: React.FC<BulbsListProps> = ({ bulbs, selectedBulbs, onCl
                   {selectedBulbs.includes(bulb.id) ? 'Selected' : 'Select'}
                 </button>
                 <button
-                  onClick={() => onIdentifyBulb(bulb.id)}
+                  onClick={() => identifyBulb(bulb.id)}
                   className="px-4 py-2 rounded-md bg-yellow-500 hover:bg-yellow-600"
                 >
                   Identify

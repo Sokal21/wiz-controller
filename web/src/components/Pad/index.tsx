@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { HexColorPicker } from 'react-colorful';
 import { PadProps } from './types';
+import { useChangeBulbColor } from '../../hooks/useChangeBulbColor';
 
 interface PadSquare {
   letter: string;
@@ -8,7 +9,10 @@ interface PadSquare {
   isPickerOpen: boolean;
 }
 
-export const Pad: React.FC<PadProps> = ({ onPadPress, timeout, setTimeout }) => {
+export const Pad: React.FC<PadProps> = ({ selectedBulbs }) => {
+  const padTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [padTimeout, setPadTimeout] = useState(1000);
+  const { changeBulbColor } = useChangeBulbColor();
   const [squares, setSquares] = useState<PadSquare[]>([
     { letter: 'q', color: '#ffffff', isPickerOpen: false },
     { letter: 'w', color: '#ffffff', isPickerOpen: false }, 
@@ -20,6 +24,22 @@ export const Pad: React.FC<PadProps> = ({ onPadPress, timeout, setTimeout }) => 
     { letter: 'x', color: '#ffffff', isPickerOpen: false },
     { letter: 'c', color: '#ffffff', isPickerOpen: false }
   ]);
+
+  const handlePadPress = useCallback((color: string) => {
+    if (selectedBulbs.length > 0) {
+      selectedBulbs.forEach((bulbId) => {
+        changeBulbColor(bulbId, color);
+      }); 
+    }
+    if (padTimeoutRef.current) {
+      clearTimeout(padTimeoutRef.current);
+    }
+    padTimeoutRef.current = setTimeout(() => {
+      selectedBulbs.forEach((bulbId) => {
+        changeBulbColor(bulbId, '#000001');
+      });
+    }, padTimeout);
+  }, [selectedBulbs, changeBulbColor, padTimeout]);
 
   const handleSquareClick = (index: number) => {
     setSquares(squares.map((square, i) => 
@@ -42,9 +62,9 @@ export const Pad: React.FC<PadProps> = ({ onPadPress, timeout, setTimeout }) => 
   const handleKeyPress = useCallback((event: KeyboardEvent) => {
     const square = squares.find(s => s.letter === event.key.toLowerCase());
     if (square) {
-      onPadPress(square.color);
+      handlePadPress(square.color);
     }
-  }, [squares, onPadPress]);
+  }, [squares, handlePadPress]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyPress);
@@ -78,15 +98,15 @@ export const Pad: React.FC<PadProps> = ({ onPadPress, timeout, setTimeout }) => 
       ))}
       <div className="col-span-3 mt-4">
         <label htmlFor="timeout-slider" className="block mb-2">
-          Light Timeout: {timeout}ms
+          Light Timeout: {padTimeout}ms
         </label>
         <input
           id="timeout-slider"
           type="range"
           min="0"
           max="1000"
-          value={timeout}
-          onChange={(e) => setTimeout(parseInt(e.target.value))}
+          value={padTimeout}
+          onChange={(e) => setPadTimeout(parseInt(e.target.value))}
           className="w-full"
         />
       </div>

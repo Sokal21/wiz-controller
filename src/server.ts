@@ -1,13 +1,6 @@
 import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
 import { WizService } from './service';
-// import { WizCommands, createMessage, isCommandSupported } from './wiz';
-
-interface CommandPayload {
-  command: string;
-  bulbId: string;
-  params?: any;
-}
 
 export class SocketIOServer {
   private io: SocketServer;
