@@ -11,7 +11,6 @@ import dgram from 'dgram';
 import { useNetworkInterface } from './networking';
 import {
   bufferToJSON,
-  BulbState,
   createMessage,
   createRegistrationMessage,
   isRegistrationResponse,
@@ -20,49 +19,15 @@ import {
   SyncPilotMessage,
   WizCommands,
 } from './wiz';
+import { Actor, Controller, State, Store } from './bridge';
 
 type Emmiter = (command: Buffer) => void;
-
-interface Actor {
-  id: string;
-  name: string;
-  state: BulbState;
-  emmiter: Emmiter;
-}
-
-export class Store {
-  data: Map<string, Actor>;
-
-  constructor() {
-    this.data = new Map<string, Actor>();
-  }
-
-  has(key: string): boolean {
-    return this.data.has(key);
-  }
-
-  get(key: string): Actor | undefined {
-    return this.data.get(key);
-  }
-
-  set(key: string, value: Actor): void {
-    this.data.set(key, value);
-  }
-
-  delete(key: string): boolean {
-    return this.data.delete(key);
-  }
-
-  clear(): void {
-    this.data.clear();
-  }
-}
 
 const CONNECTION_TIMEOUT = 300_000;
 const PORT_IN = 38900;
 const PORT_OUT = 38899;
 
-export class WizService {
+export class WizService implements Controller {
   private inSocket: dgram.Socket;
   private outSocket: dgram.Socket;
   private portIn: number = PORT_IN;
@@ -97,6 +62,11 @@ export class WizService {
     await this.register();
   }
 
+  changeLightState(bulbId: string, state: State): void {
+    const message = createMessage(bulbId, WizCommands.BulbGeneric, state);
+    this.outSocket.send(message, this.portOut, bulbId);
+  }
+
   stop(): void {
     this.isRegistered = false;
     this.inSocket.unref();
@@ -119,8 +89,19 @@ export class WizService {
     }
 
     const message = createMessage(bulbId, WizCommands.BulbGeneric, params);
-    bulb.emmiter(message);
+    this.outSocket.send(message, this.portOut, bulbId);
   }
+
+  private sendDiscoveryMessage(): void {
+    const { ipAddress, macAddress, broadcastAddress } = useNetworkInterface();
+
+    const registrationMessage = createRegistrationMessage(ipAddress, macAddress);
+
+    this.debug(`trying to register thru ${broadcastAddress}`);
+
+    this.outSocket.send(registrationMessage, this.portOut, broadcastAddress);
+  }
+
 
   private async register(): Promise<void> {
     if (this.isRegistered) {
@@ -137,8 +118,6 @@ export class WizService {
     });
 
     return new Promise<void>((resolve, reject) => {
-      const { ipAddress, macAddress, broadcastAddress } = useNetworkInterface();
-
       const callback = (error: Error | null) => {
         if (error !== null) {
           this.stop();
@@ -178,12 +157,11 @@ export class WizService {
           }
         });
 
-        const registrationMessage = createRegistrationMessage(ipAddress, macAddress);
+        this.sendDiscoveryMessage()
 
-        this.debug(`trying to register thru ${broadcastAddress}`);
-
-        this.outSocket.send(registrationMessage, this.portOut, broadcastAddress, callback);
-
+        setInterval(() => {
+          this.sendDiscoveryMessage();
+        }, 5000);
         return;
       };
 
@@ -202,54 +180,15 @@ export class WizService {
         const payload = bufferToJSON(msg) as SyncPilotMessage;
 
         if (!this.store.has(id)) {
-          // emitter works over the service udp socket
-          const commandEmmiter: Emmiter = (command: Buffer) => {
-            this.outSocket.send(command, this.portOut, id);
-          };
-
           const { state, r, g, b, dimming, temp, sceneId, speed } = payload.params;
 
           const newActor: Actor = {
             id,
             name: info.address,
-            emmiter: commandEmmiter,
-            state: {
-              state,
-              r,
-              g,
-              b,
-              sceneId,
-              temp,
-              dimming,
-              speed,
-            },
+            type: 'wiz',
           };
 
           this.store.set(id, newActor);
-          // const command = createMessage(id, WizCommands.BulbGetState, {}); 
-          // commandEmmiter(command);
-
-          // setInterval(() => {
-          //   const b = this.store.get(id)
-
-          //   if(b?.state.state) {
-          //     const command = createMessage(id, WizCommands.BulbGeneric, {
-          //       state: true,
-          //       speed: 1
-          //     })
-          //     commandEmmiter(command)
-
-          //     this.store.set(id, { ...b, state: { ...b.state, state: false } })
-          //   } else if (b) {
-          //     const command = createMessage(id, WizCommands.BulbGeneric, {
-          //       state: false,
-          //       speed: 1
-          //     })
-          //     commandEmmiter(command)
-
-          //     this.store.set(id, { ...b, state: { ...b.state, state: true } })
-          //   }
-          // }, 2000)
 
           this.debug(`New actor named ${newActor.name} (id: ${newActor.id})`);
         }
@@ -257,9 +196,5 @@ export class WizService {
     });
 
     return;
-  }
-
-  getBulbs(): Array<Actor> {
-    return Array.from(this.store.data.values());
   }
 }

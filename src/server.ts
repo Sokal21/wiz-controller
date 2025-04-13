@@ -1,12 +1,12 @@
 import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
-import { WizService } from './service';
+import { Bridge, State } from './bridge';
 
 export class SocketIOServer {
   private io: SocketServer;
   private httpServer: ReturnType<typeof createServer>;
 
-  constructor(private wizService: WizService) {
+  constructor(private bridge: Bridge) {
     this.httpServer = createServer();
     this.io = new SocketServer(this.httpServer, {
       cors: {
@@ -59,21 +59,12 @@ export class SocketIOServer {
 
       // Get available bulbs
       socket.on('getBulbs', () => {
-        const bulbs = this.wizService.getBulbs();
+        const bulbs = this.bridge.getBulbs();
         socket.emit('bulbs', bulbs);
       });
 
-      socket.on('sendMessage', (payload: { bulbId: string, message: {
-        state?: boolean;
-        speed?: number;
-        dimming?: number;
-        temp?: number;
-        sceneId?: number;
-        r?: number;
-        g?: number;
-        b?: number;
-      }}) => {
-        this.wizService.sendGenericMessage(payload.bulbId, payload.message);
+      socket.on('sendMessage', (payload: { bulbId: string, message: State}) => {
+        this.bridge.changeLightState(payload.bulbId, payload.message);
       });
       
 

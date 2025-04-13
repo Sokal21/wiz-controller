@@ -17,6 +17,7 @@
   "dependencies": {
     "@lukeed/uuid": "^2.0.1",
     "chroma-js": "^3.1.2",
+    "magic-home": "^2.9.0",
     "nodemon": "^3.1.9",
     "socket.io": "^4.8.1",
     "zod": "^3.24.2"
