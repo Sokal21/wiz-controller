@@ -5,15 +5,16 @@ import { useChangeBulbBrightness } from "../../hooks/useChangeBulbBrigthness";
 import { ColorSetterProps } from "./types";
 
 const ColorSetter: React.FC<ColorSetterProps> = ({ selectedBulbs, onColorChange }) => {
-    const [brightness, setBrightness] = useState(50);
+    const [brightness, setBrightness] = useState(255);
     const [color, setColor] = useState('#ffffff');
     const { changeBulbColor } = useChangeBulbColor();
     const { changeBulbBrightness } = useChangeBulbBrightness();
 
     const handleBrightnessChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setBrightness(parseInt(e.target.value));
+        const value = parseInt(e.target.value);
+        setBrightness(value);
         selectedBulbs.forEach((bulbId) => {
-          changeBulbBrightness(bulbId, parseInt(e.target.value));
+          changeBulbBrightness(bulbId, value);
         });
       };
 
@@ -43,17 +44,17 @@ const ColorSetter: React.FC<ColorSetterProps> = ({ selectedBulbs, onColorChange 
   />
   <div style={{ marginTop: '20px' }}>
     <label htmlFor="brightness-slider" style={{ display: 'block', marginBottom: '10px' }}>
-      Brightness: {brightness}%
+      Brightness: {brightness}
     </label>
     <input
       id="brightness-slider"
       type="range"
       min="0"
-      max="100"
+      max="255"
       value={brightness}
       onChange={handleBrightnessChange}
-          style={{ width: '100%' }}
-        />
+      style={{ width: '100%' }}
+    />
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ export const BulbsList: React.FC<BulbsListProps> = ({ bulbs, selectedBulbs, onCl
   const identifyBulb = (bulbId: string) => {
     changeBulbColor(bulbId, '#ffffff');
     setTimeout(() => {
-      changeBulbColor(bulbId, '#000001');
+      changeBulbColor(bulbId, '#010101');
     }, 100);
   };
   

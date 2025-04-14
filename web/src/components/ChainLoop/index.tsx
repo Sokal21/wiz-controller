@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useChangeBulbColor } from "../../hooks/useChangeBulbColor";
 import { ChainLoopProps } from "./types";
+import { getOffColor } from "../../utils/getOffColor";
 
 const ChainLoop: React.FC<ChainLoopProps> = ({ selectedBulbs, color }) => {
     const [sequence, setSequence] = useState<string[]>([]);
@@ -24,8 +25,8 @@ const ChainLoop: React.FC<ChainLoopProps> = ({ selectedBulbs, color }) => {
           changeBulbColor(bulbId, color);
           currentIndexRef.current = (currentIndexRef.current + 1) % sequence.length;
 
-          setTimeout(() => {
-            changeBulbColor(bulbId, '#000001');
+          setTimeout(() => {            
+            changeBulbColor(bulbId, getOffColor(color));
           }, lightDuration);
         }, transitionTime);
 

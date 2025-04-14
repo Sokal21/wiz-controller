@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { HexColorPicker } from 'react-colorful';
 import { PadProps } from './types';
 import { useChangeBulbColor } from '../../hooks/useChangeBulbColor';
-
+import { getOffColor } from '../../utils/getOffColor';
 interface PadSquare {
   letter: string;
   color: string;
@@ -36,7 +36,7 @@ export const Pad: React.FC<PadProps> = ({ selectedBulbs }) => {
     }
     padTimeoutRef.current = setTimeout(() => {
       selectedBulbs.forEach((bulbId) => {
-        changeBulbColor(bulbId, '#000001');
+        changeBulbColor(bulbId, getOffColor(color));
       });
     }, padTimeout);
   }, [selectedBulbs, changeBulbColor, padTimeout]);

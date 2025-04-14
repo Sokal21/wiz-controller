@@ -2,7 +2,7 @@ import React, { ReactNode, useEffect, useCallback } from "react";
 import { createVoidContext } from "../utils/voidContext";
 import { io, Socket } from "socket.io-client";
 
-const socket = io('http://localhost:3000')
+const socket = io('http://192.168.100.87:3000')
 
 interface SocketContext {
   socket: Socket | null;

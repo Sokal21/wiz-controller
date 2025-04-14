@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChangeBulbColor } from '../../hooks/useChangeBulbColor';
 import { SoundBeatProps } from './types';
 import { useMicrophone } from '../../hooks/useMicrophone';
-
+import { getOffColor } from '../../utils/getOffColor';
 const SoundBeat: React.FC<SoundBeatProps> = ({ selectedBulbs, color }) => {
   const { changeBulbColor } = useChangeBulbColor();
   const [isBeatDetected, setIsBeatDetected] = useState(false);
@@ -27,7 +27,7 @@ const SoundBeat: React.FC<SoundBeatProps> = ({ selectedBulbs, color }) => {
   const onBeatEnded = useCallback(() => {
     setIsBeatDetected(false);
     selectedBulbs.forEach((bulbId) => {
-      changeBulbColor(bulbId, '#000001');
+      changeBulbColor(bulbId, getOffColor(color));
     });
   }, [changeBulbColor, selectedBulbs]);
 
