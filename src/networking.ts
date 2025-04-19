@@ -8,37 +8,75 @@ interface NetworkInfo {
   netmask: string;
 }
 
-export const useNetworkInterface = (): NetworkInfo => {
-  // ignore loopback
-  const nInterfaces = Object.entries(OS.networkInterfaces()).find(([key]) => key !== 'lo');
-
-  if (!Array.isArray(nInterfaces)) {
-    throw new Error('Interface not found');
-  }
-
-  const preferredInterface = nInterfaces[1]?.find(i => i.family === 'IPv4');
-  const { address, mac, netmask } = preferredInterface as NetworkInterfaceInfo;
-  const broadcastAddress = calculateBroadcast(address, netmask);
-
-  return {
-    ipAddress: address,
-    macAddress: mac,
-    broadcastAddress,
-    netmask,
-  };
-};
+/**
+ * Calculates the broadcast address for a given IP address and netmask
+ * @param ipAddress - The IP address in dotted decimal notation
+ * @param netmask - The netmask in dotted decimal notation
+ * @returns The broadcast address in dotted decimal notation
+ * @throws Error if the IP address or netmask is invalid
+ */
 const calculateBroadcast = (ipAddress: string, netmask: string): string => {
-  // super basic broadcast address calculation
-  const ip = ipAddress.split('.');
+  const ipOctets = ipAddress.split('.').map(Number);
+  const maskOctets = netmask.split('.').map(Number);
 
-  if (netmask === '255.255.255.0') {
-    ip.splice(ip.length - 1, 1, '255');
-    return ip.join('.');
-  } else if (netmask === '255.0.0.0') {
-    return '192.168.100.255';
-    // ip.splice(1, 3, '255', '255', '255');
-    // return ip.join('.');
+  if (ipOctets.length !== 4 || maskOctets.length !== 4) {
+    throw new Error('Invalid IP address or netmask format');
   }
 
-  throw new Error('Could not calculate broadcast address');
+  if (ipOctets.some(octet => isNaN(octet) || octet < 0 || octet > 255) ||
+      maskOctets.some(octet => isNaN(octet) || octet < 0 || octet > 255)) {
+    throw new Error('Invalid IP address or netmask values');
+  }
+
+  // Calculate broadcast address by ORing the IP with the inverse of the netmask
+  const broadcastOctets = ipOctets.map((octet, i) => {
+    const maskOctet = maskOctets[i];
+    return (octet | (~maskOctet & 0xFF)) & 0xFF;
+  });
+
+  return broadcastOctets.join('.');
+};
+
+/**
+ * Retrieves network interface information for the first non-loopback interface
+ * @returns NetworkInfo object containing IP address, MAC address, broadcast address, and netmask
+ * @throws Error if no suitable network interface is found
+ */
+export const useNetworkInterface = (): NetworkInfo => {
+  const interfaces = OS.networkInterfaces();
+  
+  // Find the first non-loopback interface with IPv4
+  const interfaceEntry = Object.entries(interfaces).find(([name, addrs]) => {
+    return name !== 'lo' && addrs?.some(addr => addr.family === 'IPv4');
+  });
+
+  if (!interfaceEntry) {
+    throw new Error('No suitable network interface found');
+  }
+
+  const [interfaceName, addresses] = interfaceEntry;
+  const preferredInterface = addresses?.find(addr => addr.family === 'IPv4');
+
+  if (!preferredInterface) {
+    throw new Error(`No IPv4 address found for interface ${interfaceName}`);
+  }
+
+  const { address, mac, netmask } = preferredInterface;
+
+  if (!address || !mac || !netmask) {
+    throw new Error(`Missing required network information for interface ${interfaceName}`);
+  }
+
+  try {
+    const broadcastAddress = calculateBroadcast(address, netmask);
+    
+    return {
+      ipAddress: address,
+      macAddress: mac,
+      broadcastAddress,
+      netmask,
+    };
+  } catch (error) {
+    throw new Error(`Failed to calculate broadcast address: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 };
