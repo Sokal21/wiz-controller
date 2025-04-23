@@ -218,7 +218,7 @@ func sendStripData(port serial.Port, leds []byte, ackChan <-chan bool) {
 	totalBytesSent = numBytesToSend
 	elapsed := time.Since(startTime)
 	throughput := float64(totalBytesSent) / elapsed.Seconds()
-	fmt.Printf("Sent full strip data (%d bytes) in %s. Waiting for ACK...\n", numBytesToSend, elapsed)
+	fmt.Printf("Sent full strip data (%d bytes) in %s. Waiting for ACK...\n", numBytesToSend, elapsed, throughput)
 
 	// Wait for the single ACK after sending all data
 	ackReceived := <-ackChan
