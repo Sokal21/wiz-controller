@@ -1,7 +1,7 @@
 export enum CommandType {
   SET_LIGHTS = 'SET_LIGHTS',
   DISCOVER = 'DISCOVER',
-  DISCOVER_RESPONSE = 'DISCOVER_RESPONSE'
+  DISCOVER_RESPONSE = 'DISCOVER_RESPONSE',
 }
 
 export interface Command<T extends CommandType, P> {
@@ -10,14 +10,11 @@ export interface Command<T extends CommandType, P> {
 }
 
 export interface SetLightsPayload {
-  line: 'TOP' | 'BOTTOM';
-  lights: [
-    {
-      r?: number;
-      g?: number;
-      b?: number;
-    }
-  ];
+  lights: {
+    r?: number;
+    g?: number;
+    b?: number;
+  }[];
 }
 
 export interface DiscoverPayload {
