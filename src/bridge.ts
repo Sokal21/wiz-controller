@@ -1,7 +1,7 @@
 export interface Actor {
   id: string;
   name: string;
-  type: 'wiz' | 'mh';
+  type: 'wiz' | 'mh' | 'arduino';
 }
 
 export interface State {

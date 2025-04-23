@@ -1,5 +1,4 @@
 import OS from 'os';
-import { NetworkInterfaceInfo } from 'os';
 
 interface NetworkInfo {
   ipAddress: string;

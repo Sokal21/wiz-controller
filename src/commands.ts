@@ -10,13 +10,11 @@ export interface Command<T extends CommandType, P> {
 }
 
 export interface SetLightsPayload {
-  lights: [
-    {
-      r?: number;
-      g?: number;
-      b?: number;
-    }
-  ];
+  lights: {
+    r?: number;
+    g?: number;
+    b?: number;
+  }[];
 }
 
 export interface DiscoverPayload {
