@@ -1,0 +1,34 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-clang-x64"
+        },
+        {
+            "name": "Arduino",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/share/arduino/hardware/arduino/avr/cores/arduino",
+                "/usr/share/arduino/hardware/arduino/avr/libraries/**",
+                "/home/maxi/Arduino/libraries/**",
+                "/usr/share/arduino/hardware/arduino/avr/variants/standard"
+            ],
+            "defines": [
+                "ARDUINO=10819",
+                "ARDUINO_AVR_UNO" // If you're using an Uno
+            ],
+            "compilerPath": "/usr/bin/avr-gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
