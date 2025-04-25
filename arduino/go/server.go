@@ -1,15 +1,17 @@
 package main
 
 import (
-	"bytes" // Added for bytes.Equal
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
-	"go.bug.st/serial" // Make sure you have this dependency: go get go.bug.st/serial
+	"go.bug.st/serial" // go get go.bug.st/serial
 )
 
 // CommandType represents the type of command
@@ -17,591 +19,544 @@ type CommandType string
 
 const (
 	// Command types
-	SetLights        CommandType = "SET_LIGHTS"
+	Pulse            CommandType = "PULSE"
 	Discover         CommandType = "DISCOVER"
 	DiscoverResponse CommandType = "DISCOVER_RESPONSE"
 
 	// Configuration Constants
-	udpPort           = 41234
-	defaultSerialPath = "/dev/ttyUSB0" // Adjusted common path, change if needed
-	baudRate          = 115200
-	ledCount          = 300        // Fixed number of LEDs as per requirement
-	bytesPerLED       = 3          // RGB
-	commandExpiryMs   = int64(2)   // Commands expire after 50ms (Adjust as needed)
-	ackTimeoutMs      = int64(100) // 1 second timeout for ACK (Adjust as needed)
-	ackByte           = byte(0xaa) // Acknowledge byte from Arduino
+	udpPort             = 41234
+	defaultSerialPath   = "/dev/ttyUSB0" // Adjust for your OS
+	baudRate            = 115200
+	ledCount            = 300
+	bytesPerLED         = 3
+	stripLength         = 150
+	middlePixelStrip1   = 74   // Index (0-149)
+	middlePixelStrip2   = 74   // Index (0-149) relative to strip 2 start (absolute: 150 + 74 = 224)
+	pulseWidth          = 3    // <<< Width of the pulse (use odd numbers for best symmetry)
+	animationFrameRate  = 1000 // Target FPS for CALCULATING frames
+	animationIntervalMs = 1000 / animationFrameRate
+	ackByte             = byte(0xaa)
+	ackTimeoutMs        = int64(250) // ACK timeout for each frame sent
+
+	// Buffer Sizes
+	udpBufferSize    = 65535
+	serialBufferSize = 128
 )
 
-// Command represents a generic command
+// --- Struct Definitions ---
+
 type Command struct {
 	Type    CommandType     `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
-
-// SetLightsPayload represents the payload for SET_LIGHTS command
-// Assumes Lights will always contain exactly ledCount (300) items
-type SetLightsPayload struct {
-	Lights []Light `json:"lights"`
+type PulsePayload struct {
+	R                int     `json:"r"`
+	G                int     `json:"g"`
+	B                int     `json:"b"`
+	PropagationSpeed float64 `json:"propagationSpeed"` // Pixels per millisecond
 }
-
-// Light represents an RGB light
-type Light struct {
-	R int `json:"r,omitempty"`
-	G int `json:"g,omitempty"`
-	B int `json:"b,omitempty"`
-}
-
-// DiscoverResponsePayload represents the payload for DISCOVER_RESPONSE command
 type DiscoverResponsePayload struct {
 	IP              string `json:"ip"`
 	DeviceType      string `json:"deviceType"`
 	FirmwareVersion string `json:"firmwareVersion"`
 }
-
-// QueuedCommand represents a command in the queue
-type QueuedCommand struct {
-	Command   Command
-	Timestamp time.Time
+type ActivePulse struct {
+	StartTime        time.Time
+	ColorR           byte
+	ColorG           byte
+	ColorB           byte
+	PropagationSpeed float64
+	ID               int // Simple ID for logging
 }
 
-// ArduinoServer represents the server that communicates with Arduino
+var pulseCounter int // Simple counter for pulse IDs
+
+// ArduinoServer holds the server state
 type ArduinoServer struct {
-	udpServer         *net.UDPConn
-	serialPort        serial.Port
-	localIP           string
-	ackReceived       bool
-	ackTimeout        *time.Timer
-	isWaitingForAck   bool
-	commandQueue      []QueuedCommand
-	isProcessingQueue bool
-	ledBuffer         []byte     // *** OPTIMIZATION: Reusable buffer for LED data ***
-	mu                sync.Mutex // Protects shared state below
-	// Constants stored in struct for convenience
-	commandExpiryMs int64
-	ledCount        int
-	bytesPerLED     int
-	ackByte         byte
-	ackTimeoutMs    int64
+	udpServer  *net.UDPConn
+	serialPort serial.Port
+	localIP    string
+	// --- State Buffers & Animation ---
+	ledBuffer       []byte // Represents the *last successfully ACKNOWLEDGED* LED state sent
+	desiredLedState []byte // State calculated by animation loop, target for next send
+	activePulses    []*ActivePulse
+	animationMutex  sync.Mutex // Protects activePulses, desiredLedState
+	// --- //
+	wg           sync.WaitGroup
+	shutdownChan chan struct{}
+	// --- ACK Channel ---
+	ackChannel chan struct{} // Buffered channel for ACK synchronization
+	// --- Configuration ---
+	ledCount          int
+	bytesPerLED       int
+	stripLength       int
+	middlePixelStrip1 int
+	middlePixelStrip2 int
+	animationInterval time.Duration
+	ackByte           byte
+	ackTimeoutMs      int64
+	pulseWidth        int
 }
 
-// NewArduinoServer creates a new ArduinoServer
+// --- Server Initialization ---
+
 func NewArduinoServer(port int, serialPath string, baud int) (*ArduinoServer, error) {
-	server := &ArduinoServer{
-		commandQueue:    make([]QueuedCommand, 0, 20), // Pre-allocate queue capacity
-		commandExpiryMs: commandExpiryMs,
-		ledCount:        ledCount,
-		bytesPerLED:     bytesPerLED,
-		ackByte:         ackByte,
-		ackTimeoutMs:    ackTimeoutMs,
-		// *** OPTIMIZATION: Allocate buffer once ***
-		ledBuffer: make([]byte, ledCount*bytesPerLED),
+	if middlePixelStrip1 < 0 || middlePixelStrip1 >= stripLength {
+		return nil, fmt.Errorf("invalid middlePixelStrip1")
+	}
+	if middlePixelStrip2 < 0 || middlePixelStrip2 >= stripLength {
+		return nil, fmt.Errorf("invalid middlePixelStrip2")
+	}
+	if pulseWidth <= 0 {
+		return nil, fmt.Errorf("pulseWidth must be positive")
 	}
 
-	// Find local IP
+	server := &ArduinoServer{
+		ledBuffer:         make([]byte, ledCount*bytesPerLED),
+		desiredLedState:   make([]byte, ledCount*bytesPerLED),
+		activePulses:      make([]*ActivePulse, 0, 10),
+		shutdownChan:      make(chan struct{}),
+		ackChannel:        make(chan struct{}, 1), // Buffered channel for ACK synchronization
+		ledCount:          ledCount,
+		bytesPerLED:       bytesPerLED,
+		stripLength:       stripLength,
+		middlePixelStrip1: middlePixelStrip1,
+		middlePixelStrip2: middlePixelStrip2,
+		pulseWidth:        pulseWidth,
+		animationInterval: time.Duration(animationIntervalMs) * time.Millisecond,
+		ackByte:           ackByte,
+		ackTimeoutMs:      ackTimeoutMs,
+	}
+
 	localIP, err := findLocalIP()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find local IP: %v", err)
+		return nil, fmt.Errorf("failed find local IP: %v", err)
 	}
 	server.localIP = localIP
 	log.Printf("Using local IP: %s", server.localIP)
+	log.Printf("Strip 1 Mid: %d, Strip 2 Mid Rel: %d (Abs: %d), PulseWidth: %d", server.middlePixelStrip1, server.middlePixelStrip2, server.stripLength+server.middlePixelStrip2, server.pulseWidth)
 
-	// Setup UDP server
-	addr := &net.UDPAddr{
-		Port: port,
-		IP:   net.ParseIP("0.0.0.0"),
-	}
+	addr := &net.UDPAddr{Port: port, IP: net.ParseIP("0.0.0.0")}
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start UDP server on port %d: %v", port, err)
+		return nil, fmt.Errorf("UDP listen error: %v", err)
 	}
 	server.udpServer = conn
 	log.Printf("UDP Server listening on port %d", port)
 
-	// Connect to serial port
-	mode := &serial.Mode{
-		BaudRate: baud,
-		Parity:   serial.NoParity,
-		DataBits: 8,
-		StopBits: serial.OneStopBit,
-	}
-	log.Printf("Attempting to connect to serial port %s at %d baud", serialPath, baud)
+	mode := &serial.Mode{BaudRate: baud, Parity: serial.NoParity, DataBits: 8, StopBits: serial.OneStopBit}
+	log.Printf("Connecting serial %s @ %d baud", serialPath, baud)
 	portHandle, err := serial.Open(serialPath, mode)
 	if err != nil {
-		conn.Close() // Close UDP socket if serial fails
-		return nil, fmt.Errorf("failed to open serial port %s: %v", serialPath, err)
+		conn.Close()
+		return nil, fmt.Errorf("serial open error: %v", err)
 	}
 	server.serialPort = portHandle
 	log.Printf("Connected to Arduino on %s", serialPath)
 
-	// Recommended: Short delay and initial flush after opening serial
-	time.Sleep(2 * time.Second)
-	err = server.serialPort.ResetInputBuffer()
-	if err != nil {
-		log.Printf("Warning: Failed to reset serial input buffer: %v", err)
-	}
-	err = server.serialPort.ResetOutputBuffer()
-	if err != nil {
-		log.Printf("Warning: Failed to reset serial output buffer: %v", err)
-	}
+	time.Sleep(1 * time.Second)
+	// Initial clear state will be sent by the sender loop if needed
 
 	return server, nil
 }
 
-// findLocalIP finds a suitable local IP address (preferring common private ranges)
+// findLocalIP finds a suitable local IP address
 func findLocalIP() (string, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "", err
 	}
-
 	var fallbackIP string
-	preferredPrefixes := []string{"192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."} // Added more 172 ranges
-
+	preferredPrefixes := []string{"192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."}
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ip := ipnet.IP.To4(); ip != nil {
 				ipStr := ip.String()
-				// Store the first non-loopback IPv4 as a fallback
 				if fallbackIP == "" {
 					fallbackIP = ipStr
 				}
-				// Check for preferred private prefixes
 				for _, prefix := range preferredPrefixes {
 					if bytes.HasPrefix([]byte(ipStr), []byte(prefix)) {
-						return ipStr, nil // Return preferred IP immediately
+						return ipStr, nil
 					}
 				}
 			}
 		}
 	}
-
 	if fallbackIP != "" {
-		return fallbackIP, nil // Return the first non-loopback if no preferred found
+		return fallbackIP, nil
 	}
-
 	return "", fmt.Errorf("no suitable non-loopback IPv4 address found")
 }
 
-// Start starts the server's listeners
+// Start launches the server's background goroutines
 func (s *ArduinoServer) Start() {
 	log.Println("Starting server routines...")
+	s.wg.Add(4) // UDP Listener, Serial Listener, Animation Calc Loop, Serial Sender Loop
 	go s.handleUDPMessages()
 	go s.handleSerialData()
-	// Optional: Start a ticker to periodically check queue health or trigger processing
-	// go s.monitorQueue() // Example
+	go s.runAnimationCalculatorLoop()
+	go s.runSerialSenderLoop()
+	log.Println("Server routines started.")
 }
 
-// handleUDPMessages handles incoming UDP messages in a loop
-func (s *ArduinoServer) handleUDPMessages() {
-	// Reuse buffer for UDP reads
-	buffer := make([]byte, 4096)
+// --- Network and Serial Handlers ---
 
+// handleUDPMessages listens for UDP packets, parses commands, adds pulses
+func (s *ArduinoServer) handleUDPMessages() {
+	defer s.wg.Done()
+	buffer := make([]byte, udpBufferSize)
+	log.Println("UDP message handler started.")
 	for {
+		select {
+		case <-s.shutdownChan:
+			log.Println("UDP listener shutting down.")
+			return
+		default:
+		}
+
+		s.udpServer.SetReadDeadline(time.Now().Add(1 * time.Second))
 		n, remoteAddr, err := s.udpServer.ReadFromUDP(buffer)
 		if err != nil {
-			// Check if the error is due to the connection being closed
-			if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
-				log.Println("UDP listener closed, exiting handleUDPMessages.")
-				return // Exit goroutine if connection is closed
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			if opErr, ok := err.(*net.OpError); ok && strings.Contains(opErr.Err.Error(), "use of closed network connection") {
+				log.Println("UDP listener closed.")
+				return
 			}
 			log.Printf("Error reading UDP: %v", err)
 			continue
 		}
 
-		message := buffer[:n] // Slice to actual received data length
-		// log.Printf("Received %d bytes from %s", n, remoteAddr) // Verbose logging
-
-		// Try to parse as a structured command
+		message := buffer[:n]
 		var command Command
-		// Use bytes.NewReader for potentially better performance with json decoder
-		// jsonDecoder := json.NewDecoder(bytes.NewReader(message))
-		// if err := jsonDecoder.Decode(&command); err != nil {
 		if err := json.Unmarshal(message, &command); err != nil {
-			log.Printf("Error parsing JSON command from %s: %v (data: %s)", remoteAddr, err, string(message))
+			log.Printf("Error parsing JSON from %s: %v (data: %s)", remoteAddr, err, limitString(string(message), 100))
 			continue
 		}
 
-		// log.Printf("Received command: %s from %s", command.Type, remoteAddr) // Less verbose log
 		switch command.Type {
 		case Discover:
-			s.handleDiscoverCommand(remoteAddr)
-		case SetLights:
-			s.queueSetLightsCommand(command, remoteAddr)
+			s.sendIPResponse(remoteAddr)
+		case Pulse:
+			var pulseCmd PulsePayload
+			if err := json.Unmarshal(command.Payload, &pulseCmd); err != nil {
+				log.Printf("Error parsing PULSE payload: %v", err)
+				continue
+			}
+			if pulseCmd.PropagationSpeed <= 0 {
+				log.Printf("Invalid propagation speed: %f", pulseCmd.PropagationSpeed)
+				continue
+			}
+
+			pulseCounter++ // Increment global pulse counter
+			newPulse := &ActivePulse{
+				ID:               pulseCounter, // Assign unique ID
+				StartTime:        time.Now(),
+				ColorR:           byte(max(0, min(255, pulseCmd.R))),
+				ColorG:           byte(max(0, min(255, pulseCmd.G))),
+				ColorB:           byte(max(0, min(255, pulseCmd.B))),
+				PropagationSpeed: pulseCmd.PropagationSpeed,
+			}
+			log.Printf("Creating new pulse ID %d with speed %.2f px/ms", newPulse.ID, newPulse.PropagationSpeed)
+
+			s.animationMutex.Lock()
+			s.activePulses = append(s.activePulses, newPulse)
+			activeCount := len(s.activePulses)
+			s.animationMutex.Unlock()
+			log.Printf("Added new pulse ID %d. Total active: %d", newPulse.ID, activeCount)
+
 		default:
-			log.Printf("Unknown command type received: %s from %s", command.Type, remoteAddr)
+			log.Printf("Unknown command type received: %s", command.Type)
 		}
 	}
 }
 
-// handleSerialData handles incoming serial data, primarily looking for ACKs
+// handleSerialData reads data from serial, specifically looking for ACK bytes
 func (s *ArduinoServer) handleSerialData() {
-	buffer := make([]byte, 128) // Reuse buffer for serial reads
+	defer s.wg.Done()
+	buffer := make([]byte, serialBufferSize)
+	log.Println("Serial data handler started (ACK mode).")
 	for {
+		select {
+		case <-s.shutdownChan:
+			log.Println("Serial listener shutting down.")
+			return
+		default:
+		}
+
 		n, err := s.serialPort.Read(buffer)
 		if err != nil {
-			// Check if the error is due to the port being closed (e.g., during shutdown)
-			// Error messages might vary across OS/drivers, "file already closed" or "invalid argument" are common
-			if err.Error() == "serial port closed" || err.Error() == "file already closed" || err.Error() == "invalid argument" {
-				log.Println("Serial port closed, exiting handleSerialData.")
-				return // Exit goroutine
+			if strings.Contains(err.Error(), "serial port closed") || strings.Contains(err.Error(), "file already closed") || strings.Contains(err.Error(), "invalid argument") || err.Error() == "EOF" {
+				log.Println("Serial port closed/EOF.")
+				return
 			}
-			log.Printf("Error reading serial: %v", err)
-			// Optional: Add delay before retrying after error
-			time.Sleep(500 * time.Millisecond)
+			// log.Printf("Error reading serial: %v", err); // Reduce noise
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
 		if n > 0 {
 			data := buffer[:n]
-			// log.Printf("Received serial data: %v", data) // Verbose
-
-			// Check for ACK byte within received data
-			ackFoundInBatch := false
 			for _, b := range data {
 				if b == s.ackByte {
-					s.mu.Lock()
-					// Only process ACK if we are actively waiting for one
-					if s.isWaitingForAck {
-						//log.Println("Received ACK from Arduino")
-						s.ackReceived = true // Mark received
-						// *** REFACTOR: Use helper to cleanup state and queue ***
-						s.finishCurrentCommandAndProcessNext_locked()
-						ackFoundInBatch = true // Mark that we need to trigger next processing
-						s.mu.Unlock()
-						break // Assume one ACK is sufficient per command sent
-					} else {
-						// log.Printf("Received unexpected ACK byte 0x%x", b)
-						s.mu.Unlock() // Release lock if not waiting
+					select {
+					case s.ackChannel <- struct{}{}:
+					default:
 					}
+					break // Process one ACK per read batch
 				}
 			}
+		}
+	}
+}
 
-			// If ACK was processed, trigger check for the next command *after* releasing lock
-			if ackFoundInBatch {
-				go s.processNextCommand()
+// --- Animation Calculation Goroutine (Corrected Logic) ---
+
+func (s *ArduinoServer) runAnimationCalculatorLoop() {
+	defer s.wg.Done()
+	log.Println("Animation calculator loop started.")
+	ticker := time.NewTicker(s.animationInterval)
+	defer ticker.Stop()
+
+	// Buffer used for calculating the combined frame
+	combinedFrameBuffer := make([]byte, s.ledCount*s.bytesPerLED)
+	pulseWidthRadius := int(math.Floor(float64(s.pulseWidth-1) / 2.0)) // Pixels +/- from the calculated edge
+
+	for {
+		select {
+		case <-s.shutdownChan:
+			log.Println("Animation calculator loop shutting down.")
+			return
+		case <-ticker.C:
+			s.animationMutex.Lock() // Lock for reading activePulses and writing desiredLedState
+
+			now := time.Now()
+			// Reset buffer for this frame (additive blending starts from black)
+			for i := range combinedFrameBuffer {
+				combinedFrameBuffer[i] = 0
 			}
-		}
+			nextActivePulses := make([]*ActivePulse, 0, len(s.activePulses))
+
+			// --- Calculate state for all active pulses ---
+			for _, pulse := range s.activePulses {
+				// Calculate elapsed time in milliseconds
+				elapsedMs := float64(now.Sub(pulse.StartTime).Milliseconds())
+				// Calculate distance in pixels based on propagation speed (pixels per millisecond)
+				distance := elapsedMs * pulse.PropagationSpeed
+
+				log.Printf("Pulse ID %d: elapsed=%.2f ms, speed=%.2f px/ms, distance=%.2f px",
+					pulse.ID, elapsedMs, pulse.PropagationSpeed, distance)
+
+				// --- Strip 1 Calculation ---
+				center1 := float64(s.middlePixelStrip1)
+				// Calculate the precise edges expanding outwards
+				leftEdgePos1 := center1 - distance
+				rightEdgePos1 := center1 + distance
+
+				// Determine the pixel range illuminated by the pulse width on the left side
+				leftPulseStart1 := max(0, int(math.Round(leftEdgePos1))-pulseWidthRadius)
+				leftPulseEnd1 := min(s.stripLength, int(math.Round(leftEdgePos1))+pulseWidthRadius+1) // Range end is exclusive
+
+				// Determine the pixel range illuminated by the pulse width on the right side
+				rightPulseStart1 := max(0, int(math.Round(rightEdgePos1))-pulseWidthRadius)
+				rightPulseEnd1 := min(s.stripLength, int(math.Round(rightEdgePos1))+pulseWidthRadius+1)
+
+				strip1StillActive := false
+				// Apply color to affected pixels on strip 1
+				for i := leftPulseStart1; i < rightPulseEnd1; i++ { // Iterate potential bounding box
+					// Check if pixel `i` falls within the width of the left or right edge
+					isLeftPulsePixel := i >= leftPulseStart1 && i < leftPulseEnd1
+					isRightPulsePixel := i >= rightPulseStart1 && i < rightPulseEnd1
+
+					if isLeftPulsePixel || isRightPulsePixel {
+						strip1StillActive = true // Mark as active if any pixel is lit
+						offset := i * s.bytesPerLED
+						combinedFrameBuffer[offset] = addColors(combinedFrameBuffer[offset], pulse.ColorR)
+						combinedFrameBuffer[offset+1] = addColors(combinedFrameBuffer[offset+1], pulse.ColorG)
+						combinedFrameBuffer[offset+2] = addColors(combinedFrameBuffer[offset+2], pulse.ColorB)
+					}
+				}
+
+				// --- Strip 2 Calculation ---
+				center2 := float64(s.middlePixelStrip2) // Relative center
+				leftEdgePos2 := center2 - distance
+				rightEdgePos2 := center2 + distance
+
+				leftPulseStartRel2 := max(0, int(math.Round(leftEdgePos2))-pulseWidthRadius)
+				leftPulseEndRel2 := min(s.stripLength, int(math.Round(leftEdgePos2))+pulseWidthRadius+1)
+				rightPulseStartRel2 := max(0, int(math.Round(rightEdgePos2))-pulseWidthRadius)
+				rightPulseEndRel2 := min(s.stripLength, int(math.Round(rightEdgePos2))+pulseWidthRadius+1)
+
+				strip2StillActive := false
+				// Apply color to affected pixels on strip 2
+				for iRel := leftPulseStartRel2; iRel < rightPulseEndRel2; iRel++ { // Iterate potential bounding box (relative)
+					isLeftPulsePixel := iRel >= leftPulseStartRel2 && iRel < leftPulseEndRel2
+					isRightPulsePixel := iRel >= rightPulseStartRel2 && iRel < rightPulseEndRel2
+
+					if isLeftPulsePixel || isRightPulsePixel {
+						strip2StillActive = true                         // Mark as active if any pixel is lit
+						offset := (iRel + s.stripLength) * s.bytesPerLED // Absolute index
+						combinedFrameBuffer[offset] = addColors(combinedFrameBuffer[offset], pulse.ColorR)
+						combinedFrameBuffer[offset+1] = addColors(combinedFrameBuffer[offset+1], pulse.ColorG)
+						combinedFrameBuffer[offset+2] = addColors(combinedFrameBuffer[offset+2], pulse.ColorB)
+					}
+				}
+
+				// --- Check if pulse should be removed ---
+				// Remove if the pulse is no longer visibly contributing to *either* strip
+				if strip1StillActive || strip2StillActive {
+					nextActivePulses = append(nextActivePulses, pulse)
+				} else {
+					log.Printf("Pulse ID %d finished and removed.", pulse.ID) // Log removal
+				}
+			} // --- End iterating through active pulses ---
+
+			// Update active pulses list
+			s.activePulses = nextActivePulses
+
+			// Update desiredLedState which will be picked up by the sender
+			copy(s.desiredLedState, combinedFrameBuffer)
+
+			s.animationMutex.Unlock() // Unlock after calculations and state update
+		} // End select case ticker.C
+	} // End for loop
+}
+
+// --- Serial Sending Goroutine ---
+
+func (s *ArduinoServer) runSerialSenderLoop() {
+	defer s.wg.Done()
+	log.Println("Serial sender loop started.")
+
+	frameToSend := make([]byte, s.ledCount*s.bytesPerLED) // Local buffer for sending
+
+	for {
+		select {
+		case <-s.shutdownChan:
+			log.Println("Serial sender loop shutting down.")
+			return
+		default:
+			// --- Check if ACK allows sending ---
+			select {
+			case <-s.ackChannel:
+				// ACK received, proceed with sending
+			case <-time.After(time.Duration(s.ackTimeoutMs) * time.Millisecond):
+				log.Printf("ACK timeout for frame after %d ms.", s.ackTimeoutMs)
+			}
+
+			// --- Get the current frame to send ---
+			s.animationMutex.Lock()
+			copy(frameToSend, s.desiredLedState)
+			s.animationMutex.Unlock()
+			log.Printf("Sending frame to serial.")
+			log.Println(frameToSend)
+
+			// --- Send Frame ---
+			n, err := s.serialPort.Write(frameToSend)
+			log.Printf("Frame sent to serial (%d bytes).", n)
+			if err != nil {
+				log.Printf("ERR writing frame (%d bytes): %v.", n, err)
+				time.Sleep(100 * time.Millisecond) // Pause after error
+			}
+
+			// Small sleep to maintain frame rate
+			time.Sleep(s.animationInterval / 2)
+
+		} // End select
+	} // End for loop
+}
+
+// --- Utility and Main ---
+
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
+	return b
+}
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+func addColors(c1, c2 byte) byte {
+	if c1 == c2 {
+		return c1
+	}
+	val := int(c1) + int(c2)
+	if val > 255 {
+		return 255
+	}
+	return byte(val)
+}
+func limitString(s string, length int) string {
+	if len(s) <= length {
+		return s
+	}
+	if length < 0 {
+		length = 0
+	}
+	return s[:length] + "..."
 }
 
-// handleDiscoverCommand handles the DISCOVER command
-func (s *ArduinoServer) handleDiscoverCommand(remoteAddr *net.UDPAddr) {
-	// log.Println("Received discovery command")
-	s.sendIPResponse(remoteAddr)
-}
-
-// sendIPResponse sends the discovery response back to the client
 func (s *ArduinoServer) sendIPResponse(remoteAddr *net.UDPAddr) {
-	payload := DiscoverResponsePayload{
-		IP:              s.localIP,
-		DeviceType:      "Arduino LED Controller Go",
-		FirmwareVersion: "1.1.0-opt", // Indicate optimized version
+	if remoteAddr == nil {
+		log.Println("Warn: No remote addr for discovery.")
+		return
 	}
-	// Marshal payload first
-	payloadBytes, err := json.Marshal(payload)
+	s.animationMutex.Lock()
+	ip := s.localIP
+	s.animationMutex.Unlock()
+	payload := DiscoverResponsePayload{IP: ip, DeviceType: "Arduino LED Controller Go", FirmwareVersion: "2.3.2-pulse-refine2"} // Version bump
+	payloadBytes, _ := json.Marshal(payload)
+	response := Command{Type: DiscoverResponse, Payload: json.RawMessage(payloadBytes)}
+	responseBytes, _ := json.Marshal(response)
+	_, err := s.udpServer.WriteToUDP(responseBytes, remoteAddr)
 	if err != nil {
-		log.Printf("Error marshaling discovery payload: %v", err)
-		return
-	}
-
-	// Wrap in generic Command structure
-	response := Command{
-		Type:    DiscoverResponse,
-		Payload: json.RawMessage(payloadBytes), // Assign marshaled payload
-	}
-
-	// Marshal the final command
-	responseBytes, err := json.Marshal(response)
-	if err != nil {
-		log.Printf("Error marshaling discovery response command: %v", err)
-		return
-	}
-
-	// Send response back to the original sender
-	_, err = s.udpServer.WriteToUDP(responseBytes, remoteAddr)
-	if err != nil {
-		log.Printf("Error sending discovery response to %s: %v", remoteAddr, err)
-	} else {
-		// log.Printf("Sent discovery response to %s", remoteAddr)
+		log.Printf("Error sending discovery to %s: %v", remoteAddr, err)
 	}
 }
 
-// queueSetLightsCommand adds a SET_LIGHTS command to the processing queue
-func (s *ArduinoServer) queueSetLightsCommand(command Command, remoteAddr *net.UDPAddr) {
-	// log.Println("Queueing set lights command")
-
-	s.mu.Lock()
-	s.commandQueue = append(s.commandQueue, QueuedCommand{
-		Command:   command,
-		Timestamp: time.Now(),
-	})
-	shouldStartProcessing := !s.isProcessingQueue && !s.isWaitingForAck
-	s.mu.Unlock()
-
-	// log.Printf("Command queue length: %d", queueLen)
-
-	// If nothing is currently being processed or waiting for ACK, start processing
-	if shouldStartProcessing {
-		go s.processNextCommand()
-	}
-}
-
-// processNextCommand checks the queue and processes the next valid command
-func (s *ArduinoServer) processNextCommand() {
-	s.mu.Lock()
-
-	// If queue is empty, or we are already sending/waiting for ACK, do nothing
-	if len(s.commandQueue) == 0 || s.isProcessingQueue || s.isWaitingForAck {
-		s.mu.Unlock()
-		return
-	}
-
-	// *** OPTIMIZATION: Efficiently check for and remove expired commands ***
-	now := time.Now()
-	firstValidIndex := 0
-	for i, item := range s.commandQueue {
-		age := now.Sub(item.Timestamp).Milliseconds()
-		if age <= s.commandExpiryMs {
-			// Found the first non-expired command
-			break
-		}
-		// Command is expired
-		// log.Printf("Removing expired command (age: %dms)", age)
-		firstValidIndex = i + 1
-	}
-
-	// Reslice the queue to remove expired commands from the front
-	if firstValidIndex > 0 {
-		if firstValidIndex >= len(s.commandQueue) {
-			// All commands expired
-			s.commandQueue = s.commandQueue[:0] // Clear queue efficiently
-		} else {
-			// Slice includes elements from firstValidIndex onwards
-			s.commandQueue = s.commandQueue[firstValidIndex:]
-		}
-	}
-	// *** End Optimization ***
-
-	// If queue is now empty after removing expired items, stop
-	if len(s.commandQueue) == 0 {
-		s.isProcessingQueue = false // Ensure state is correct
-		s.mu.Unlock()
-		return
-	}
-
-	// Mark as processing *before* unlocking, grab command details
-	s.isProcessingQueue = true
-	commandToProcess := s.commandQueue[0]
-	s.mu.Unlock() // Release lock *before* potentially long-running handler
-
-	// Process the command (contains serial write and ACK logic)
-	s.handleSetLightsCommand(commandToProcess.Command)
-}
-
-// handleSetLightsCommand processes the SET_LIGHTS command, sends data, handles ACK
-func (s *ArduinoServer) handleSetLightsCommand(command Command) {
-	// log.Println("Processing set lights command")
-
-	var payload SetLightsPayload
-	if err := json.Unmarshal(command.Payload, &payload); err != nil {
-		log.Printf("Error parsing SET_LIGHTS payload: %v", err)
-		s.cleanupAndProcessNext() // Use public wrapper to clean up this failed command
-		return
-	}
-
-	// --- Sanity check based on requirement ---
-	if len(payload.Lights) != s.ledCount {
-		log.Printf("Error: Expected %d lights in payload, but got %d. Dropping command.", s.ledCount, len(payload.Lights))
-		s.cleanupAndProcessNext() // Clean up this invalid command
-		return
-	}
-	// --- End Sanity Check ---
-
-	// --- OPTIMIZATION: Use pre-allocated buffer ---
-	// ledBuffer := s.ledBuffer[:s.ledCount*s.bytesPerLED] // Reslice to correct length (already correct size)
-	ledBuffer := s.ledBuffer // Can use directly if always full size
-
-	// Fill the buffer - assumes payload.Lights is exactly s.ledCount long
-	for i := 0; i < s.ledCount; i++ {
-		light := payload.Lights[i] // Direct access safe due to check above
-		offset := i * s.bytesPerLED
-		ledBuffer[offset] = byte(light.R)
-		ledBuffer[offset+1] = byte(light.G)
-		ledBuffer[offset+2] = byte(light.B)
-	}
-	// --- End Optimization ---
-
-	// --- REFACTOR: Setup ACK Wait ---
-	s.mu.Lock()
-	if !s.setupAckWait_locked() {
-		// This indicates a logical error - we shouldn't be here if already waiting.
-		s.mu.Unlock()
-		log.Println("CRITICAL ERROR: Attempted to process command while already waiting for ACK. Check logic.")
-		// Don't trigger next command processing here, as the state is inconsistent.
-		// Might need a more robust recovery mechanism or just let the existing wait timeout.
-		return
-	}
-	s.mu.Unlock() // Unlock *after* successfully setting up wait state
-
-	// --- Send data to Arduino ---
-	// log.Printf("Sending %d bytes of LED data to Arduino", len(ledBuffer))
-	_, err := s.serialPort.Write(ledBuffer)
-	if err != nil {
-		log.Printf("Error writing to serial port: %v", err)
-		s.mu.Lock()
-		// Failed to write, so cancel the ACK wait we just set up
-		s.cancelAckWait_locked()
-		// Clean up the state as if the command failed
-		s.finishCurrentCommandAndProcessNext_locked()
-		s.mu.Unlock()
-		// Trigger processing for the *next* command
-		go s.processNextCommand()
-	} else {
-		// log.Printf("Sent %d bytes of LED data to Arduino, waiting for ACK...", len(ledBuffer))
-		// ACK wait is running, do nothing here, handled by handleSerialData or handleAckTimeout
-	}
-}
-
-// --- Refactored Helper Functions ---
-
-// setupAckWait_locked prepares the state for waiting for an ACK.
-// MUST be called with the mutex held. Returns true on success.
-func (s *ArduinoServer) setupAckWait_locked() bool {
-	if s.isWaitingForAck {
-		return false // Should not happen if called correctly
-	}
-	s.ackReceived = false
-	s.isWaitingForAck = true
-
-	// Stop previous timer just in case (should be nil if logic is correct)
-	if s.ackTimeout != nil {
-		s.ackTimeout.Stop()
-	}
-	// Start new timeout timer
-	s.ackTimeout = time.AfterFunc(time.Duration(s.ackTimeoutMs)*time.Millisecond, s.handleAckTimeout)
-	return true
-}
-
-// handleAckTimeout is called by the time.AfterFunc timer when ACK times out.
-func (s *ArduinoServer) handleAckTimeout() {
-	s.mu.Lock()
-	// Only act if we were still waiting for ACK and haven't received it
-	if s.isWaitingForAck && !s.ackReceived {
-		log.Println("ACK timeout - no response from Arduino")
-		// Clean up state and remove the command that timed out
-		s.finishCurrentCommandAndProcessNext_locked()
-		s.mu.Unlock()
-		// Trigger check for next command *after* releasing lock
-		go s.processNextCommand()
-	} else {
-		// Timeout is irrelevant now (ACK received or state changed)
-		s.mu.Unlock()
-	}
-}
-
-// cancelAckWait_locked stops the ACK timer and resets waiting state.
-// Useful if the serial write fails before ACK could arrive.
-// MUST be called with the mutex held.
-func (s *ArduinoServer) cancelAckWait_locked() {
-	if s.ackTimeout != nil {
-		s.ackTimeout.Stop()
-		s.ackTimeout = nil
-	}
-	s.isWaitingForAck = false
-	s.ackReceived = false
-}
-
-// finishCurrentCommandAndProcessNext_locked cleans up state after a command finishes
-// (either successfully via ACK, or via timeout/error).
-// It removes the command from the queue and resets processing flags.
-// MUST be called with the mutex held.
-func (s *ArduinoServer) finishCurrentCommandAndProcessNext_locked() {
-	// Stop timer if it's still running
-	s.cancelAckWait_locked() // Combines timer stop and flag reset
-
-	// Remove the command that just finished from the front of the queue
-	if len(s.commandQueue) > 0 {
-		s.commandQueue = s.commandQueue[1:]
-	}
-	// Mark that we are no longer processing this command
-	s.isProcessingQueue = false
-}
-
-// cleanupAndProcessNext is a public wrapper used when a command fails
-// *before* ACK waiting begins (e.g., parse error, invalid payload).
-// Acquires lock, cleans up, releases lock, triggers next processing.
-func (s *ArduinoServer) cleanupAndProcessNext() {
-	s.mu.Lock()
-	// We weren't waiting for ACK yet, just need to remove the command and reset processing flag
-	if len(s.commandQueue) > 0 {
-		s.commandQueue = s.commandQueue[1:]
-	}
-	s.isProcessingQueue = false
-	s.mu.Unlock()
-	// Trigger check for next command
-	go s.processNextCommand()
-}
-
-// Close cleans up resources
 func (s *ArduinoServer) Close() error {
-	log.Println("Closing server resources...")
+	log.Println("Initiating server shutdown...")
+	close(s.shutdownChan)
 	var firstErr error
 	if s.udpServer != nil {
-		log.Println("Closing UDP socket...")
-		err := s.udpServer.Close()
-		if err != nil {
-			log.Printf("Error closing UDP socket: %v", err)
+		if err := s.udpServer.Close(); err != nil {
+			log.Printf("Error closing UDP: %v", err)
 			firstErr = err
 		}
 	}
 	if s.serialPort != nil {
-		log.Println("Closing serial port...")
-		err := s.serialPort.Close()
-		if err != nil {
-			log.Printf("Error closing serial port: %v", err)
+		if err := s.serialPort.Close(); err != nil {
+			log.Printf("Error closing serial: %v", err)
 			if firstErr == nil {
 				firstErr = err
 			}
 		}
 	}
-	// Stop any pending ACK timer
-	s.mu.Lock()
-	if s.ackTimeout != nil {
-		s.ackTimeout.Stop()
-	}
-	s.mu.Unlock()
+	log.Println("Waiting for routines...")
+	s.wg.Wait()
 	log.Println("Server resources closed.")
 	return firstErr
 }
 
-// --- Main Function ---
 func main() {
-	log.Println("Starting Arduino LED Controller...")
-
-	// Use constants defined at the top
+	log.Println("Starting Arduino LED Controller (Decoupled Pulse Mode V4)...")
 	serialPortPath := defaultSerialPath
-	// TODO: Consider command-line flags for serial port if needed
-	// e.g., flag.StringVar(&serialPortPath, "serial", defaultSerialPath, "Path to Arduino serial port")
-	// flag.Parse()
-
-	// Create the server instance
 	server, err := NewArduinoServer(udpPort, serialPortPath, baudRate)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
-
-	// Defer closing resources
 	defer func() {
 		if err := server.Close(); err != nil {
 			log.Printf("Error during server close: %v", err)
 		}
 	}()
-
-	// Start the server's listening goroutines
 	server.Start()
-
-	log.Println("Server started successfully. Running until interrupted (Ctrl+C)...")
-	// Keep the main thread alive indefinitely
-	// Could replace with signal handling for graceful shutdown
+	log.Println("Server started successfully. Running...")
 	select {}
 }
