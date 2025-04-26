@@ -85,7 +85,7 @@ export class WizService implements Controller {
   }): void {
     const bulb = this.store.get(bulbId);
     if (!bulb) {
-      throw new Error('Bulb not found');
+      return
     }
 
     const message = createMessage(bulbId, WizCommands.BulbGeneric, params);

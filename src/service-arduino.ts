@@ -1,13 +1,14 @@
 import dgram from 'dgram';
 import { Controller, State, Store } from "./bridge";
 import { useNetworkInterface } from './networking';
-import { CommandType, DiscoverCommand, DiscoverResponseCommand, AnyCommand, SetLightsCommand, SetLightsPayload } from './commands';
+import { CommandType, DiscoverCommand, DiscoverResponseCommand, AnyCommand, PulseCommand, SetLightsPayload } from './commands';
 
 export class ArduinoService implements Controller {
   private debug = console.log;
   private socket: dgram.Socket;
   private discoveryInterval: NodeJS.Timeout | null = null;
   private readonly PORT = 41234;
+  private orderCounter = 0;
 
   constructor(private store: Store) {
     this.socket = dgram.createSocket('udp4');
@@ -65,12 +66,18 @@ export class ArduinoService implements Controller {
     this.debug('ArduinoService started');
   }
 
+  private getNextOrder(): number {
+    this.orderCounter = (this.orderCounter + 1) % 256;
+    return this.orderCounter;
+  }
+
   private sendDiscoveryMessage(): void {
     try {
       const { broadcastAddress } = useNetworkInterface();
       const command: DiscoverCommand = {
         type: CommandType.DISCOVER,
-        payload: {}
+        payload: {},
+        order: this.getNextOrder()
       };
       
       const message = Buffer.from(JSON.stringify(command));
@@ -93,18 +100,17 @@ export class ArduinoService implements Controller {
         this.debug('Bulb not found:', bulbId);
         return;
       }
-      // Create array of 300 identical RGB values
-      const lights: SetLightsPayload['lights'] = Array.from({ length: 300 }, () => ({
-        r: state.r,
-        g: state.g,
-        b: state.b
-      }));
+ 
 
-      const command: SetLightsCommand = {
-        type: CommandType.SET_LIGHTS,
+      const command: PulseCommand = {
+        type: CommandType.PULSE,
         payload: {
-          lights
-        }
+          r: state.r,
+          g: state.g,
+          b: state.b,
+          propagationSpeed: 0.060
+        },
+        order: this.getNextOrder()
       };
 
       const message = Buffer.from(JSON.stringify(command));

@@ -1,4 +1,5 @@
 export enum CommandType {
+  PULSE = 'PULSE',
   SET_LIGHTS = 'SET_LIGHTS',
   DISCOVER = 'DISCOVER',
   DISCOVER_RESPONSE = 'DISCOVER_RESPONSE',
@@ -7,6 +8,7 @@ export enum CommandType {
 export interface Command<T extends CommandType, P> {
   type: T;
   payload: P;
+  order: number;
 }
 
 export interface SetLightsPayload {
@@ -15,6 +17,13 @@ export interface SetLightsPayload {
     g?: number;
     b?: number;
   }[];
+}
+
+export interface PulsePayload {
+  r?: number;
+  g?: number;
+  b?: number;
+  propagationSpeed: number;
 }
 
 export interface DiscoverPayload {
@@ -31,5 +40,5 @@ export interface DiscoverResponsePayload {
 export type SetLightsCommand = Command<CommandType.SET_LIGHTS, SetLightsPayload>;
 export type DiscoverCommand = Command<CommandType.DISCOVER, DiscoverPayload>;
 export type DiscoverResponseCommand = Command<CommandType.DISCOVER_RESPONSE, DiscoverResponsePayload>;
-
+export type PulseCommand = Command<CommandType.PULSE, PulsePayload>;
 export type AnyCommand = SetLightsCommand | DiscoverCommand | DiscoverResponseCommand;

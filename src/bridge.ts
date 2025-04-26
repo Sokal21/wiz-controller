@@ -71,7 +71,7 @@ export class Bridge {
   }): void {
     const bulb = this.store.get(bulbId);
     if (!bulb) {
-      throw new Error(`Bulb ${bulbId} not found`);
+      return
     }
 
 
