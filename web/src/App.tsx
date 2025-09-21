@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useGetBulbs } from './hooks/useGetBulbs';
 import { BulbsList } from './components/BulbsList';
 import { Controller } from './components/Controller';
+import AudioPlayer from './components/AudioPlayer';
 
 import './App.css';
 

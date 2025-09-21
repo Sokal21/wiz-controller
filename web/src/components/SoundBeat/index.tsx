@@ -3,6 +3,9 @@ import { useChangeBulbColor } from '../../hooks/useChangeBulbColor';
 import { SoundBeatProps } from './types';
 import { useMicrophone } from '../../hooks/useMicrophone';
 import { getOffColor } from '../../utils/getOffColor';
+import { useAudioStream } from '../../hooks/useAudioStream';
+import { useBeatStream } from '../../hooks/useBeatDetection';
+
 const SoundBeat: React.FC<SoundBeatProps> = ({ selectedBulbs, color }) => {
   const { changeBulbColor } = useChangeBulbColor();
   const [isBeatDetected, setIsBeatDetected] = useState(false);
@@ -31,17 +34,23 @@ const SoundBeat: React.FC<SoundBeatProps> = ({ selectedBulbs, color }) => {
     });
   }, [changeBulbColor, selectedBulbs]);
 
-  const { 
-    isMicrophoneActive,
-    currentVolume,
-    noiseThreshold,
-    toggleMicrophone,
-    stopMicrophone,
-    setNoiseThreshold
-  } = useMicrophone(
-    onBeatDetected,
-    onBeatEnded
-  );
+  // const { 
+  //   isMicrophoneActive,
+  //   currentVolume,
+  //   noiseThreshold,
+  //   toggleMicrophone,
+  //   stopMicrophone,
+  //   setNoiseThreshold
+  // } = useMicrophone(
+  //   onBeatDetected,
+  //   onBeatEnded
+  // );
+
+  const {
+    isStreaming: isMicrophoneActive,
+    toggleStreaming: toggleMicrophone,
+    stopStreaming: stopMicrophone,
+  } = useBeatStream(onBeatDetected, onBeatEnded);
 
   useEffect(() => {
     return () => {
@@ -52,15 +61,17 @@ const SoundBeat: React.FC<SoundBeatProps> = ({ selectedBulbs, color }) => {
     };
   }, [stopMicrophone]);
 
-  const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setNoiseThreshold(parseInt(e.target.value));
-  };
+  // const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  //   console.log('Threshold changed:', e.target.value);
+
+  //   setNoiseThreshold(parseInt(e.target.value));
+  // };
 
   return (
     <div>
       <h3>Sound Control</h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div>
+        {/* <div>
           <label htmlFor="threshold-slider" style={{ display: 'block', marginBottom: '10px' }}>
             Beat Sensitivity: {noiseThreshold}%
           </label>
@@ -73,8 +84,8 @@ const SoundBeat: React.FC<SoundBeatProps> = ({ selectedBulbs, color }) => {
             onChange={handleThresholdChange}
             style={{ width: '100%' }}
           />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        </div> */}
+        {/* <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div
             style={{
               width: '100px',
@@ -94,7 +105,7 @@ const SoundBeat: React.FC<SoundBeatProps> = ({ selectedBulbs, color }) => {
             />
           </div>
           <span>Volume: {Math.round(currentVolume)}%</span>
-        </div>
+        </div> */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <label htmlFor="random-mode">Random Mode:</label>
           <input
