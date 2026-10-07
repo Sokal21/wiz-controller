@@ -8,4 +8,8 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    // Reachable from other devices on the LAN (a phone, a tablet next to the lamps).
+    host: true,
+  },
 })
