@@ -1,25 +1,27 @@
 {
-  "name": "wiz-udp-controller",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "wiz-controller",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Scene-based light show controller for WiZ, Magic Home and Arduino lamps on the local network",
+  "license": "GPL-3.0",
   "scripts": {
-    "start": "nodemon --exec ts-node src/index.ts"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "@types/node": "^22.13.9",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.2"
+    "dev": "concurrently -n server,web -c blue,magenta \"yarn dev:server\" \"yarn dev:web\"",
+    "dev:server": "tsx watch src/index.ts",
+    "dev:web": "yarn --cwd web dev",
+    "dev:sim": "DRIVERS=none yarn dev",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@lukeed/uuid": "^2.0.1",
-    "chroma-js": "^3.1.2",
     "magic-home": "^2.9.0",
-    "nodemon": "^3.1.9",
     "socket.io": "^4.8.1",
     "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
   }
 }
