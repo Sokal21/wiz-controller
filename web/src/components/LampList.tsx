@@ -40,6 +40,12 @@ export function LampList({ scene }: { scene: Scene }) {
     select([device.id]);
   };
 
+  const moveAllToCeiling = () =>
+    updateActiveScene((current) => ({
+      ...current,
+      fixtures: current.fixtures.map((fixture) => ({ ...fixture, position: { ...fixture.position, y: current.room.height } })),
+    }));
+
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto p-4">
       <section>
@@ -82,6 +88,14 @@ export function LampList({ scene }: { scene: Scene }) {
 
         <button className="btn mt-3 w-full" onClick={addSimulated}>
           Add simulated lamp
+        </button>
+        <button
+          className="btn mt-2 w-full"
+          disabled={scene.fixtures.every((fixture) => fixture.position.y === scene.room.height)}
+          title="Raise every lamp to the height of the room, keeping where it is on the floor plan"
+          onClick={moveAllToCeiling}
+        >
+          Move all to ceiling
         </button>
       </section>
 
